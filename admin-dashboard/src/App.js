@@ -19,14 +19,54 @@ import {
   ToggleButtonGroup,
 } from "@mui/material";
 
+// 💡 NEW: Import Recharts components for the graph
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
+
 const GATEWAY_URL = "http://localhost:4000";
+
+// Custom Tooltip component for the chart
+const CustomTooltip = ({ active, payload, label }) => {
+  if (active && payload && payload.length) {
+    return (
+      <Box
+        sx={{
+          p: 1,
+          background: "rgba(0, 0, 0, 0.8)",
+          border: "1px solid #1f2937",
+          color: "white",
+        }}
+      >
+        <Typography variant="caption" sx={{ color: "#9ca3af" }}>
+          {new Date(label).toLocaleTimeString()}
+        </Typography>
+        <Typography variant="body2">
+          Requests: **{payload[0].value}**
+        </Typography>
+      </Box>
+    );
+  }
+  return null;
+};
 
 function App() {
   const [logs, setLogs] = useState([]);
   const [filter, setFilter] = useState("all");
   const [chainOK, setChainOK] = useState(true);
 
-  // ---------- LOAD LOGS FROM GATEWAY ----------
+  // 💡 NEW: State for traffic data
+  const [totalRequests, setTotalRequests] = useState(0);
+  const [timeSeriesData, setTimeSeriesData] = useState([]);
+
+  // ---------- LOAD LOGS FROM GATEWAY (EXISTING) ----------
 
   const loadLogs = async () => {
     try {
@@ -34,7 +74,7 @@ function App() {
       setLogs(res.data || []);
     } catch (err) {
       console.error("Error fetching logs", err);
-      alert("Could not load logs from gateway.");
+      // alert("Could not load logs from gateway."); // Keeping existing logic commented out for cleaner UI on error
     }
   };
 
@@ -45,7 +85,29 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
-  // ---------- CHAIN INTEGRITY STATUS ----------
+  // ---------- LOAD TRAFFIC DATA (NEW) ----------
+
+  const loadTrafficData = async () => {
+    try {
+      const res = await axios.get(`${GATEWAY_URL}/admin/traffic-data`);
+      setTotalRequests(res.data.totalRequests || 0);
+      setTimeSeriesData(res.data.timeSeries || []);
+    } catch (err) {
+      console.error("Error fetching traffic data", err);
+      // setTimeSeriesData([]); // Optionally clear on error
+    }
+  };
+
+  useEffect(() => {
+    loadTrafficData();
+    // refresh every 1s for real-time graph
+    const id = setInterval(loadTrafficData, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ---------------------------------------------
+
+  // ---------- CHAIN INTEGRITY STATUS (EXISTING) ----------
 
   const checkChainStatus = async () => {
     try {
@@ -63,7 +125,7 @@ function App() {
     return () => clearInterval(id);
   }, []);
 
-  // ---------- TRAFFIC SIMULATOR HELPERS ----------
+  // ---------- TRAFFIC SIMULATOR HELPERS (EXISTING) ----------
 
   const simulateRequest = async ({ path, userId, role }) => {
     try {
@@ -79,6 +141,7 @@ function App() {
 
       console.log("Simulation response status:", res.status);
       await loadLogs();
+      await loadTrafficData(); // 💡 NEW: Force update traffic data after simulation
     } catch (err) {
       if (!err.response) {
         alert(
@@ -106,7 +169,7 @@ function App() {
       role: "guest",
     });
 
-  // ---------- FILTERED LOGS + STATS ----------
+  // ---------- FILTERED LOGS + STATS (ADJUSTED) ----------
 
   const filteredLogs = logs.filter((entry) => {
     if (filter === "all") return true;
@@ -119,7 +182,8 @@ function App() {
     (a, b) => new Date(b.time) - new Date(a.time)
   );
 
-  const totalRequests = logs.length;
+  // 💡 ADJUSTMENT: Use totalRequests from traffic-data instead of logs.length
+  // const totalRequests = logs.length;
   const allowedCount = logs.filter(
     (e) => e.statusCode && e.statusCode < 400
   ).length;
@@ -129,7 +193,7 @@ function App() {
       (e.decision.label === "high_risk" || e.decision.label === "rbac_block")
   ).length;
 
-  // ---------- PER-USER SUMMARY ----------
+  // ---------- PER-USER SUMMARY (EXISTING) ----------
 
   const userSummaryMap = {};
 
@@ -158,7 +222,7 @@ function App() {
     ...stats,
   }));
 
-  // ---------- HELPERS ----------
+  // ---------- HELPERS (EXISTING) ----------
 
   const formatTime = (iso) => {
     if (!iso) return "-";
@@ -175,7 +239,7 @@ function App() {
     return p;
   };
 
-  // ---------- UI ----------
+  // ---------- UI (MODIFIED TO INCLUDE CHART) ----------
 
   return (
     <>
@@ -192,7 +256,10 @@ function App() {
         <Box sx={{ display: "flex", gap: 2, mb: 3, flexWrap: "wrap" }}>
           <Paper sx={{ flex: 1, p: 2, background: "#111827", color: "white" }}>
             <Typography variant="subtitle2">Total Requests</Typography>
-            <Typography variant="h4">{totalRequests}</Typography>
+            <Typography variant="h4">
+              {/* 💡 Use totalRequests from new state */}
+              {totalRequests}
+            </Typography>
           </Paper>
           <Paper sx={{ flex: 1, p: 2, background: "#065f46", color: "white" }}>
             <Typography variant="subtitle2">Allowed</Typography>
@@ -216,6 +283,39 @@ function App() {
             </Typography>
           </Paper>
         </Box>
+        
+        {/* 💡 NEW: Real-Time Traffic Graph */}
+        <Paper sx={{ p: 2, background: "#020617", mb: 3 }}>
+          <Typography variant="h6" color="white" gutterBottom>
+            Real-Time Traffic Rate (Reqs/Second)
+          </Typography>
+          <Box sx={{ width: "100%", height: 250 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={timeSeriesData}
+                margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis
+                  dataKey="time"
+                  tickFormatter={(t) => new Date(t).toLocaleTimeString()}
+                  stroke="#9ca3af"
+                />
+                <YAxis stroke="#9ca3af" />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="count"
+                  stroke="#2563eb"
+                  strokeWidth={2}
+                  name="Requests"
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </Box>
+        </Paper>
 
         {/* TOP ROW: Live Feed + Traffic Simulator */}
         <Box sx={{ display: "flex", gap: 2, mb: 3, flexWrap: "wrap" }}>
@@ -442,7 +542,9 @@ function App() {
               <TableBody>
                 {displayLogs.map((entry, idx) => (
                   <TableRow key={idx}>
-                    <TableCell sx={{ color: "white" }}>{entry.time}</TableCell>
+                    <TableCell sx={{ color: "white" }}>
+                      {formatTime(entry.time)}
+                    </TableCell>
                     <TableCell sx={{ color: "white" }}>
                       {entry.context?.path}
                     </TableCell>

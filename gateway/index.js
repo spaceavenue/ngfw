@@ -19,6 +19,39 @@ const BACKEND = "http://localhost:9000";
 // In-memory audit log (for dashboard)
 const auditLogs = [];
 
+// --- NEW: REQUEST TRACKING CONFIG ---
+let totalRequests = 0; // Tracks total requests for overall stats (allowed/blocked)
+// Time series data: [{ time: <timestamp>, count: <count> }]
+const requestTimeSeries = [];
+// Time interval for aggregating requests (e.g., every 1000ms = 1 second)
+const aggregationInterval = 1000; 
+
+// Function to update the time series data
+const updateTimeSeries = () => {
+    // Get current time rounded down to the nearest aggregation interval (in ms)
+    const now = Math.floor(Date.now() / aggregationInterval) * aggregationInterval;
+    
+    const lastEntry = requestTimeSeries.length > 0 ? requestTimeSeries[requestTimeSeries.length - 1] : null;
+
+    if (lastEntry && lastEntry.time === now) {
+        // If an entry for the current time slot exists, increment its count
+        lastEntry.count++;
+    } else {
+        // Otherwise, add a new entry (starting with count 1)
+        requestTimeSeries.push({ time: now, count: 1 });
+    }
+};
+
+// Start a simple interval to clean up old data periodically
+setInterval(() => {
+    // Keep only data from the last 5 minutes (300 seconds * 1000 ms)
+    const cutoff = Date.now() - 300000; 
+    while (requestTimeSeries.length > 0 && requestTimeSeries[0].time < cutoff) {
+        requestTimeSeries.shift(); // Remove oldest data
+    }
+}, 60000); // Check every minute
+// --- END NEW CONFIG ---
+
 // ---- TAMPER-EVIDENT "BLOCKCHAIN" LOG CONFIG ---
 
 const DB_DIR = path.join(__dirname, "..", "db");
@@ -254,14 +287,23 @@ function checkRBAC(role, pathReq) {
   return false;
 }
 
-// -------------- ADMIN: VIEW LOGS ---------------
+// ----------------- ADMIN ENDPOINTS -----------------
 
+// NEW: Endpoint for real-time traffic data
+app.get('/admin/traffic-data', (req, res) => {
+    // This endpoint provides the dashboard with total requests and the time series for graphing
+    res.json({
+        totalRequests: totalRequests,
+        timeSeries: requestTimeSeries
+    });
+});
+
+// Admin: View in-memory logs
 app.get("/admin/logs", (req, res) => {
   res.json(auditLogs);
 });
 
-// -------------- ADMIN: VIEW / VERIFY CHAIN -----
-
+// Admin: View / Verify Chain
 app.get("/admin/chain", (req, res) => {
   try {
     if (!fs.existsSync(CHAIN_FILE)) {
@@ -309,8 +351,7 @@ app.get("/admin/chain", (req, res) => {
   }
 });
 
-// -------------- ADMIN: SIMPLE CHAIN STATUS -----
-
+// Admin: Simple Chain Status
 app.get("/admin/chain/status", (req, res) => {
   try {
     if (!fs.existsSync(CHAIN_FILE)) {
@@ -426,6 +467,11 @@ app.use("/fw", async (req, res) => {
   // 1) RBAC check
   const allowedByRole = checkRBAC(ctx.role, ctx.path);
   if (!allowedByRole) {
+    // --- NEW: INCREMENT COUNTERS FOR BLOCKED REQUESTS ---
+    totalRequests++; 
+    updateTimeSeries();
+    // --------------------------------------------------
+
     const entry = {
       time: new Date().toISOString(),
       context: ctx,
@@ -476,6 +522,11 @@ app.use("/fw", async (req, res) => {
 
   // BLOCKED
   if (!allow) {
+    // --- NEW: INCREMENT COUNTERS FOR BLOCKED REQUESTS ---
+    totalRequests++;
+    updateTimeSeries();
+    // --------------------------------------------------
+
     const blockedEntry = {
       time: new Date().toISOString(),
       context: ctx,
@@ -505,6 +556,11 @@ app.use("/fw", async (req, res) => {
       validateStatus: () => true,
     });
 
+    // --- NEW: INCREMENT COUNTERS FOR ALLOWED REQUESTS ---
+    totalRequests++;
+    updateTimeSeries();
+    // --------------------------------------------------
+
     const allowedEntry = {
       time: new Date().toISOString(),
       context: ctx,
@@ -522,6 +578,11 @@ app.use("/fw", async (req, res) => {
 
     return res.status(response.status).json(response.data);
   } catch (err) {
+    // --- NEW: INCREMENT COUNTERS FOR ERROR REQUESTS ---
+    totalRequests++;
+    updateTimeSeries();
+    // --------------------------------------------------
+
     const errorEntry = {
       time: new Date().toISOString(),
       context: ctx,
