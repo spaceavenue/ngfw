@@ -15,7 +15,6 @@ db/
 *.log
 
 # Secure
-*.pem
 
 # OS junk
 .DS_Store

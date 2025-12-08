@@ -4,10 +4,12 @@ const cors = require('cors');
 const fs = require('fs');
 const pem = require('pem');
 const https = require('https');
-const tlsFingerprint = require('read-tls-client-hello');
 
 // Shared global logs
 let auditLogs = [];
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
+const MAX_REQUESTS_PER_WINDOW = 20;
 
 // Generate self-signed certs (one-time)
 async function ensureCerts() {
@@ -79,6 +81,27 @@ function checkRBAC(role, pathReq) {
   return false;
 }
 
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const ipData = rateLimitMap.get(ip) || { count: 0, resetTime: now + RATE_LIMIT_WINDOW };
+  
+  // Reset window if expired
+  if (now > ipData.resetTime) {
+    ipData.count = 0;
+    ipData.resetTime = now + RATE_LIMIT_WINDOW;
+  }
+  
+  ipData.count++;
+  rateLimitMap.set(ip, ipData);
+  
+  const exceeded = ipData.count > MAX_REQUESTS_PER_WINDOW;
+  return {
+    allowed: !exceeded,
+    remaining: MAX_REQUESTS_PER_WINDOW - ipData.count,
+    reset: Math.ceil((ipData.resetTime - now) / 1000)
+  };
+}
+
 // TLS Inspection + Forwarding
 async function inspectAndForward(req, res) {
   // if (!req.url.startsWith('/fw')) {
@@ -86,6 +109,24 @@ async function inspectAndForward(req, res) {
   // }
 
   const ctx = buildContext(req);
+  const rateLimit = checkRateLimit(ctx.ip);
+  if (!rateLimit.allowed) {
+    const entry = {
+      time: new Date().toISOString(),
+      context: ctx,
+      decision: { 
+        allow: false, 
+        risk: 1.0, 
+        label: 'ratelimited',
+        reasons: [`Rate limit exceeded: ${rateLimit.remaining < 0 ? 0 : rateLimit.remaining} remaining, resets in ${rateLimit.reset}s`]
+      }
+    };
+    auditLogs.push(entry);
+    return res.status(429).json({ 
+      error: 'Too Many Requests', 
+      rateLimit: { remaining: rateLimit.remaining, reset: rateLimit.reset }
+    });
+  }
   const forwardPath = req.url.replace(/^\/fw/, '');
   const target = 'https://localhost:9001' + forwardPath; 
 

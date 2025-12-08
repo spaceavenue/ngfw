@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
 import {
   AppBar, Toolbar, Typography, Container, Box, Paper, Button, Chip,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+  Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow,
   ToggleButton, ToggleButtonGroup,
 } from '@mui/material';
 import {
@@ -15,11 +15,14 @@ const TLS_GATEWAY = 'https://localhost:4001';
 function App() {
   const [logs, setLogs] = useState([]);
   const [filter, setFilter] = useState('all');
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0); // Track total for pagination
+  const ROWS_PER_PAGE = 25;
 
-  // Load logs via HTTPS (browser needs cert trust)
+// Load logs via HTTPS (browser needs cert trust)
   const loadLogs = async () => {
     try {
-      const res = await axios.get(`${TLS_GATEWAY}/admin/logs`, {
+      const res = await axios.get(`${TLS_GATEWAY}/admin/logs?limit=1000`, {
         headers: { 'Accept': 'application/json' }
       });
       setLogs(res.data);
@@ -30,9 +33,10 @@ function App() {
 
   useEffect(() => {
     loadLogs();
-    const id = setInterval(loadLogs, 1000);
+    const id = setInterval(loadLogs, 5000);
     return () => clearInterval(id);
   }, []);
+
 
   // TLS Simulator (direct HTTPS calls)
   const simulateRequest = async (path, userId, role) => {
@@ -55,15 +59,50 @@ function App() {
   const simulateNormalUserInfo = () => simulateRequest('/fw/info', 'alice', 'user');
   const simulateSuspiciousGuestAdmin = () => simulateRequest('/fw/admin/secret', 'anonymous', 'guest');
   const simulateGuestAdminRBAC = () => simulateRequest('/fw/admin/secret', 'guest123', 'guest');
-
+  
+  const simulateDDoSAttack = async () => {
+  const attackCount = 100; // Rapid concurrent requests
+    const promises = [];
+    for (let i = 0; i < attackCount; i++) {
+      promises.push(
+        axios.get(`${TLS_GATEWAY}/fw/info`, {
+          headers: {
+            'x-user-id': `bot${i}`,
+            'x-user-role': 'guest'
+          },
+          timeout: 1000
+        }).catch(err => err) // Don't fail on individual request errors
+      );
+    }
+    try {
+      console.log('DDoS Attack Simulation: 100 concurrent admin requests');
+      await Promise.allSettled(promises);
+      await loadLogs();
+    } catch (err) {
+      console.log('DDoS simulation completed:', err.message);
+      await loadLogs();
+    }
+  };
   // Filtered logs & stats (unchanged logic)
-  const filteredLogs = logs.filter(entry => {
-    if (filter === 'all') return true;
-    if (filter === 'allowed') return entry.decision?.allow !== false;
-    if (filter === 'blocked') return entry.decision?.allow === false;
-    return true;
-  }).sort((a, b) => new Date(b.time) - new Date(a.time));
+  const filteredLogs = useMemo(() => {
+    return logs.filter(entry => {
+      if (filter === 'all') return true;
+      if (filter === 'allowed') return entry.decision?.allow !== false;
+      if (filter === 'blocked') return entry.decision?.allow === false;
+      return true;
+    }).sort((a, b) => new Date(b.time) - new Date(a.time));
+  }, [logs, filter]);
 
+
+  const paginatedLogs = useMemo(() => {
+    const start = page * ROWS_PER_PAGE;
+    return filteredLogs.slice(start, start + ROWS_PER_PAGE);
+  }, [filteredLogs, page]); // ✅ Depends on filtered logs
+  
+  useEffect(() => {
+    setPage(0);
+  }, [filter]);
+  
   const totalRequests = logs.length;
   const allowedCount = logs.filter(e => e.decision?.allow !== false).length;
   const highRiskCount = logs.filter(e => 
@@ -78,7 +117,7 @@ function App() {
       const res = await axios.get(
         `${TLS_GATEWAY}/admin/logs/export?format=${format}`,
         {
-          responseType: "blob", // get file as Blob
+          responseType: "blob",
         }
       );
 
@@ -108,9 +147,7 @@ function App() {
     if (e.decision?.allow === false) userSummaryMap[uid].blocked += 1;
     if (e.decision?.label === 'high_risk' || (e.tls?.risk || 0) > 0.5) userSummaryMap[uid].highRisk += 1;
   });
-  const userSummary = Object.entries(userSummaryMap).map(([userId, stats]) => ({
-    userId, ...stats
-  }));
+
 
   // Helpers
   const formatTime = (iso) => {
@@ -253,6 +290,11 @@ function App() {
               <Button fullWidth variant="contained" color="error" onClick={simulateGuestAdminRBAC}>
                 RBAC Block
               </Button>
+              <Button fullWidth variant="contained" color="error" onClick={simulateDDoSAttack}
+                sx={{ mt: 1, backgroundColor: '#dc2626' }}
+              >
+                DDoS Attack (100 reqs)
+              </Button>
             </Box>
           </Paper>
         </Box>
@@ -356,29 +398,53 @@ function App() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filteredLogs.map((entry, idx) => (
-                  <TableRow key={idx} hover>
+                {paginatedLogs.map((entry, idx) => (
+                  <TableRow key={`${entry.time}-${idx}`} hover>
                     <TableCell sx={{ color: 'white' }}>{formatTime(entry.time)}</TableCell>
-                    <TableCell sx={{ color: 'white' }}>{entry.targetPath}</TableCell>
-                    <TableCell sx={{ color: 'white' }}>{entry.context?.userId}</TableCell>
-                    <TableCell sx={{ color: 'white' }}>
-                      <Chip label={(entry.decision?.risk || 0).toFixed(2)} size="small"
-                        color={(entry.decision?.risk || 0) > 0.7 ? 'error' : 'success'} />
-                    </TableCell>
-                    {/* <TableCell sx={{ color: 'white' }}>
-                      {(entry.tls?.risk || 0) > 0 ? (
-                        <Chip label={entry.tls.risk.toFixed(2)} size="small" color="warning" />
-                      ) : '0.00'}
-                    </TableCell> */}
-                    <TableCell sx={{ color: 'white' }}>
-                      <Chip label={entry.decision?.allow !== false ? 'ALLOWED' : 'BLOCKED'} 
-                        color={entry.decision?.allow !== false ? 'success' : 'error'} />
-                    </TableCell>
+                      <TableCell sx={{ color: 'white' }}>{entry.targetPath}</TableCell>
+                      <TableCell sx={{ color: 'white' }}>{entry.context?.userId}</TableCell>
+                      <TableCell sx={{ color: 'white' }}>
+                        <Chip label={(entry.decision?.risk || 0).toFixed(2)} size="small"
+                          color={(entry.decision?.risk || 0) > 0.7 ? 'error' : 'success'} />
+                      </TableCell>
+                      {/* <TableCell sx={{ color: 'white' }}>
+                        {(entry.tls?.risk || 0) > 0 ? (
+                          <Chip label={entry.tls.risk.toFixed(2)} size="small" color="warning" />
+                        ) : '0.00'}
+                      </TableCell> */}
+                      <TableCell sx={{ color: 'white' }}>
+                        <Chip label={entry.decision?.allow !== false ? 'ALLOWED' : 'BLOCKED'} 
+                          color={entry.decision?.allow !== false ? 'success' : 'error'} />
+                      </TableCell>
                   </TableRow>
                 ))}
+                {paginatedLogs.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} sx={{ color: 'white', textAlign: 'center' }}>
+                      {filteredLogs.length === 0 ? 'No logs match filter' : 'End of results'}
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
           </TableContainer>
+          <TablePagination
+            component="div"
+            count={filteredLogs.length}  // ✅ Use filtered count
+            page={page}
+            onPageChange={(e, newPage) => setPage(newPage)}
+            rowsPerPage={ROWS_PER_PAGE}
+            onRowsPerPageChange={() => {}}  // Disable changing rows/page
+            rowsPerPageOptions={[25]}
+            labelRowsPerPage="Rows:"
+            sx={{ 
+              backgroundColor: '#111827', 
+              color: 'white',
+              '.MuiTablePagination-selectLabel, .MuiTablePagination-displayedRows': {
+                color: 'white'
+              }
+            }}
+          />
         </Paper>
       </Container>
     </>
