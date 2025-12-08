@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import axios from "axios";
 
 const GATEWAY_URL = "http://localhost:4000";
 
 function App() {
-  // -------------------- ORIGINAL STATE (Traffic) --------------------
   const [userId, setUserId] = useState("alice");
   const [role, setRole] = useState("user");
   const [lastRequest, setLastRequest] = useState(null);
@@ -39,121 +38,6 @@ function App() {
     }
   };
 
-  // -------------------- NEW STATE (RBAC Manager) --------------------
-  const [rbac, setRbac] = useState({});
-  const [roles, setRoles] = useState([]);
-  const [selectedRole, setSelectedRole] = useState("");
-  const [newAllowPath, setNewAllowPath] = useState("");
-  const [newDenyPath, setNewDenyPath] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState("");
-
-  const currentRoleRules = rbac[selectedRole] || { allow: [], deny: [] };
-
-  // Load RBAC from gateway
-  const loadRBAC = async () => {
-    try {
-      setStatus("Loading RBAC from gateway...");
-      const res = await axios.get(`${GATEWAY_URL}/admin/rbac`);
-      const data = res.data || {};
-      setRbac(data);
-      const roleNames = Object.keys(data);
-      setRoles(roleNames);
-      if (!selectedRole && roleNames.length > 0) {
-        setSelectedRole(roleNames[0]);
-      }
-      setStatus("RBAC loaded.");
-      setTimeout(() => setStatus(""), 1500);
-    } catch (err) {
-      console.error("Failed to load RBAC", err);
-      setStatus("Failed to load RBAC from gateway.");
-    }
-  };
-
-  useEffect(() => {
-    loadRBAC();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // RBAC handlers
-  const handleRoleChange = (e) => {
-    setSelectedRole(e.target.value);
-  };
-
-  const handleAddAllow = () => {
-    const p = newAllowPath.trim();
-    if (!p || !selectedRole) return;
-    setRbac((prev) => ({
-      ...prev,
-      [selectedRole]: {
-        allow: [...(prev[selectedRole]?.allow || []), p],
-        deny: [...(prev[selectedRole]?.deny || [])],
-      },
-    }));
-    setNewAllowPath("");
-  };
-
-  const handleAddDeny = () => {
-    const p = newDenyPath.trim();
-    if (!p || !selectedRole) return;
-    setRbac((prev) => ({
-      ...prev,
-      [selectedRole]: {
-        allow: [...(prev[selectedRole]?.allow || [])],
-        deny: [...(prev[selectedRole]?.deny || []), p],
-      },
-    }));
-    setNewDenyPath("");
-  };
-
-  const handleRemoveAllow = (path) => {
-    if (!selectedRole) return;
-    setRbac((prev) => ({
-      ...prev,
-      [selectedRole]: {
-        allow: (prev[selectedRole]?.allow || []).filter((p) => p !== path),
-        deny: [...(prev[selectedRole]?.deny || [])],
-      },
-    }));
-  };
-
-  const handleRemoveDeny = (path) => {
-    if (!selectedRole) return;
-    setRbac((prev) => ({
-      ...prev,
-      [selectedRole]: {
-        allow: [...(prev[selectedRole]?.allow || [])],
-        deny: (prev[selectedRole]?.deny || []).filter((p) => p !== path),
-      },
-    }));
-  };
-
-  const handleSaveRBAC = async () => {
-    try {
-      setSaving(true);
-      setStatus("Saving RBAC to gateway...");
-
-      const res = await axios.post(
-        `${GATEWAY_URL}/admin/rbac`,
-        { rbac },
-        { headers: { "Content-Type": "application/json" } }
-      );
-
-      if (res.status >= 400) {
-        throw new Error(res.data?.error || "Failed to save RBAC");
-      }
-
-      setStatus("RBAC updated successfully.");
-      setTimeout(() => setStatus(""), 2000);
-    } catch (err) {
-      console.error("Failed to save RBAC", err);
-      setStatus("Failed to save RBAC: " + err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // -------------------- UI --------------------
   return (
     <div
       style={{
@@ -190,7 +74,13 @@ function App() {
         </p>
       </header>
 
-      <main style={{ maxWidth: 900, margin: "0 auto", padding: "0 16px 40px" }}>
+      <main
+        style={{
+          maxWidth: 900,
+          margin: "0 auto",
+          padding: "0 16px 40px",
+        }}
+      >
         {/* User "session" section */}
         <section
           style={{
@@ -204,10 +94,15 @@ function App() {
           <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>
             User Session
           </h2>
-          <p style={{ marginTop: 0, color: "#9ca3af", fontSize: 14 }}>
-            Pretend you are a user or an attacker. Choose an identity and role,
-            then call different endpoints. The admin can watch everything on the
-            security dashboard.
+          <p
+            style={{
+              marginTop: 0,
+              color: "#9ca3af",
+              fontSize: 14,
+            }}
+          >
+            Choose an identity and role, then call different endpoints.
+            The admin can watch all traffic on the security dashboard.
           </p>
 
           <div
@@ -220,14 +115,18 @@ function App() {
           >
             <div style={{ flex: 1, minWidth: 180 }}>
               <label
-                style={{ display: "block", fontSize: 14, marginBottom: 4 }}
+                style={{
+                  display: "block",
+                  fontSize: 14,
+                  marginBottom: 4,
+                }}
               >
                 User ID
               </label>
               <input
                 value={userId}
                 onChange={(e) => setUserId(e.target.value)}
-                placeholder="alice, bob, attacker01…"
+                placeholder="alice, bob…"
                 style={{
                   width: "100%",
                   padding: "6px 8px",
@@ -241,7 +140,11 @@ function App() {
 
             <div style={{ flex: 1, minWidth: 180 }}>
               <label
-                style={{ display: "block", fontSize: 14, marginBottom: 4 }}
+                style={{
+                  display: "block",
+                  fontSize: 14,
+                  marginBottom: 4,
+                }}
               >
                 Role
               </label>
@@ -265,7 +168,7 @@ function App() {
           </div>
         </section>
 
-        {/* Safe actions */}
+        {/* Normal actions */}
         <section
           style={{
             marginBottom: 24,
@@ -278,9 +181,15 @@ function App() {
           <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>
             Normal Actions
           </h2>
-          <p style={{ marginTop: 0, color: "#9ca3af", fontSize: 14 }}>
-            These simulate normal user behavior. In most cases, the firewall
-            should allow them if the role is appropriate.
+          <p
+            style={{
+              marginTop: 0,
+              color: "#9ca3af",
+              fontSize: 14,
+            }}
+          >
+            These simulate normal user behaviour. In CP1 the gateway simply
+            forwards them and logs every request.
           </p>
 
           <div
@@ -325,70 +234,9 @@ function App() {
           </div>
         </section>
 
-        {/* "Attacker" actions */}
-        <section
-          style={{
-            marginBottom: 24,
-            padding: 16,
-            borderRadius: 8,
-            border: "1px solid #1f2937",
-            background: "#030712",
-          }}
-        >
-          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>
-            Suspicious / Attack Actions
-          </h2>
-          <p style={{ marginTop: 0, color: "#9ca3af", fontSize: 14 }}>
-            These endpoints simulate attackers probing admin areas or honeypots.
-            The firewall should either block them or flag them as high risk.
-          </p>
-
-          <div
-            style={{
-              display: "flex",
-              gap: 12,
-              flexWrap: "wrap",
-              marginTop: 12,
-            }}
-          >
-            <button
-              onClick={() => callApi("/admin/secret")}
-              disabled={loading}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 6,
-                border: "none",
-                background: "#ea580c",
-                color: "white",
-                cursor: "pointer",
-                fontSize: 14,
-              }}
-            >
-              GET /admin/secret
-            </button>
-
-            <button
-              onClick={() => callApi("/honeypot/db-export")}
-              disabled={loading}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 6,
-                border: "none",
-                background: "#b91c1c",
-                color: "white",
-                cursor: "pointer",
-                fontSize: 14,
-              }}
-            >
-              GET /honeypot/db-export (Honeypot)
-            </button>
-          </div>
-        </section>
-
         {/* Last response */}
         <section
           style={{
-            marginBottom: 24,
             padding: 16,
             borderRadius: 8,
             border: "1px solid #1f2937",
@@ -400,7 +248,9 @@ function App() {
           </h2>
 
           {loading && (
-            <p style={{ color: "#9ca3af", fontSize: 14 }}>Sending request…</p>
+            <p style={{ color: "#9ca3af", fontSize: 14 }}>
+              Sending request…
+            </p>
           )}
 
           {!loading && !lastRequest && (
@@ -435,331 +285,6 @@ function App() {
                 {JSON.stringify(lastRequest.data, null, 2)}
               </div>
             </div>
-          )}
-        </section>
-
-        {/* ---------------- RBAC Manager Section ---------------- */}
-        <section
-          style={{
-            padding: 16,
-            borderRadius: 8,
-            border: "1px solid #1f2937",
-            background: "#030712",
-          }}
-        >
-          <h2 style={{ marginTop: 0, marginBottom: 12, fontSize: 18 }}>
-            RBAC Manager (Edit Firewall Policies)
-          </h2>
-          <p style={{ marginTop: 0, color: "#9ca3af", fontSize: 14 }}>
-            Configure which roles can access which paths. These settings are
-            stored in the gateway and used in real-time for RBAC decisions.
-          </p>
-
-          {/* Role selection */}
-          {roles.length === 0 ? (
-            <p style={{ color: "#6b7280", fontSize: 14 }}>
-              No roles found. Check gateway RBAC configuration.
-            </p>
-          ) : (
-            <div
-              style={{
-                marginBottom: 16,
-                display: "flex",
-                gap: 16,
-                alignItems: "center",
-                flexWrap: "wrap",
-              }}
-            >
-              <div>
-                <label
-                  style={{
-                    display: "block",
-                    fontSize: 14,
-                    marginBottom: 4,
-                  }}
-                >
-                  Select Role
-                </label>
-                <select
-                  value={selectedRole}
-                  onChange={handleRoleChange}
-                  style={{
-                    padding: "6px 8px",
-                    borderRadius: 4,
-                    border: "1px solid #374151",
-                    background: "#020617",
-                    color: "white",
-                  }}
-                >
-                  {roles.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button
-                onClick={loadRBAC}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 6,
-                  border: "1px solid #4b5563",
-                  background: "#111827",
-                  color: "white",
-                  cursor: "pointer",
-                  fontSize: 13,
-                }}
-              >
-                Reload from Gateway
-              </button>
-            </div>
-          )}
-
-          {selectedRole && (
-            <>
-              <div
-                style={{
-                  display: "flex",
-                  gap: 16,
-                  flexWrap: "wrap",
-                  marginBottom: 12,
-                }}
-              >
-                {/* Allowed paths */}
-                <div style={{ flex: 1, minWidth: 260 }}>
-                  <h3 style={{ marginTop: 0, fontSize: 16 }}>Allowed Paths</h3>
-                  <ul
-                    style={{
-                      listStyle: "none",
-                      paddingLeft: 0,
-                      margin: "4px 0 8px 0",
-                    }}
-                  >
-                    {(currentRoleRules.allow || []).map((p) => (
-                      <li
-                        key={p}
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          fontSize: 13,
-                          padding: "2px 0",
-                        }}
-                      >
-                        <code>{p}</code>
-                        <button
-                          onClick={() => handleRemoveAllow(p)}
-                          style={{
-                            padding: "2px 6px",
-                            borderRadius: 4,
-                            border: "none",
-                            background: "#7f1d1d",
-                            color: "white",
-                            cursor: "pointer",
-                            fontSize: 11,
-                          }}
-                        >
-                          remove
-                        </button>
-                      </li>
-                    ))}
-                    {(!currentRoleRules.allow ||
-                      currentRoleRules.allow.length === 0) && (
-                      <li
-                        style={{
-                          fontSize: 13,
-                          color: "#6b7280",
-                          fontStyle: "italic",
-                        }}
-                      >
-                        No allowed paths defined.
-                      </li>
-                    )}
-                  </ul>
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 8,
-                      marginTop: 4,
-                    }}
-                  >
-                    <input
-                      type="text"
-                      placeholder="/info"
-                      value={newAllowPath}
-                      onChange={(e) => setNewAllowPath(e.target.value)}
-                      style={{
-                        flex: 1,
-                        padding: "6px 8px",
-                        borderRadius: 4,
-                        border: "1px solid #374151",
-                        background: "#020617",
-                        color: "white",
-                      }}
-                    />
-                    <button
-                      onClick={handleAddAllow}
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 4,
-                        border: "none",
-                        background: "#2563eb",
-                        color: "white",
-                        cursor: "pointer",
-                        fontSize: 12,
-                      }}
-                    >
-                      + add
-                    </button>
-                  </div>
-                  <p
-                    style={{
-                      marginTop: 4,
-                      fontSize: 12,
-                      color: "#9ca3af",
-                    }}
-                  >
-                    Use <code>*</code> to allow everything (e.g. for admin).
-                  </p>
-                </div>
-
-                {/* Denied paths */}
-                <div style={{ flex: 1, minWidth: 260 }}>
-                  <h3 style={{ marginTop: 0, fontSize: 16 }}>Denied Paths</h3>
-                  <ul
-                    style={{
-                      listStyle: "none",
-                      paddingLeft: 0,
-                      margin: "4px 0 8px 0",
-                    }}
-                  >
-                    {(currentRoleRules.deny || []).map((p) => (
-                      <li
-                        key={p}
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          fontSize: 13,
-                          padding: "2px 0",
-                        }}
-                      >
-                        <code>{p}</code>
-                        <button
-                          onClick={() => handleRemoveDeny(p)}
-                          style={{
-                            padding: "2px 6px",
-                            borderRadius: 4,
-                            border: "none",
-                            background: "#7f1d1d",
-                            color: "white",
-                            cursor: "pointer",
-                            fontSize: 11,
-                          }}
-                        >
-                          remove
-                        </button>
-                      </li>
-                    ))}
-                    {(!currentRoleRules.deny ||
-                      currentRoleRules.deny.length === 0) && (
-                      <li
-                        style={{
-                          fontSize: 13,
-                          color: "#6b7280",
-                          fontStyle: "italic",
-                        }}
-                      >
-                        No denied paths defined.
-                      </li>
-                    )}
-                  </ul>
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 8,
-                      marginTop: 4,
-                    }}
-                  >
-                    <input
-                      type="text"
-                      placeholder="/admin"
-                      value={newDenyPath}
-                      onChange={(e) => setNewDenyPath(e.target.value)}
-                      style={{
-                        flex: 1,
-                        padding: "6px 8px",
-                        borderRadius: 4,
-                        border: "1px solid #374151",
-                        background: "#020617",
-                        color: "white",
-                      }}
-                    />
-                    <button
-                      onClick={handleAddDeny}
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 4,
-                        border: "none",
-                        background: "#ea580c",
-                        color: "white",
-                        cursor: "pointer",
-                        fontSize: 12,
-                      }}
-                    >
-                      + add
-                    </button>
-                  </div>
-                  <p
-                    style={{
-                      marginTop: 4,
-                      fontSize: 12,
-                      color: "#9ca3af",
-                    }}
-                  >
-                    Prefixes work: a rule <code>/admin</code> blocks{" "}
-                    <code>/admin/secret</code> too.
-                  </p>
-                </div>
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  marginTop: 12,
-                  flexWrap: "wrap",
-                }}
-              >
-                <button
-                  onClick={handleSaveRBAC}
-                  disabled={saving}
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 6,
-                    border: "none",
-                    background: "#22c55e",
-                    color: "white",
-                    cursor: "pointer",
-                    fontSize: 14,
-                  }}
-                >
-                  {saving ? "Saving…" : "Save RBAC to Gateway"}
-                </button>
-              </div>
-            </>
-          )}
-
-          {status && (
-            <p
-              style={{
-                marginTop: 8,
-                fontSize: 13,
-                color: "#e5e7eb",
-              }}
-            >
-              {status}
-            </p>
           )}
         </section>
       </main>
